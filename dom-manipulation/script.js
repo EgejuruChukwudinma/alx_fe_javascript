@@ -402,4 +402,27 @@ document.addEventListener("DOMContentLoaded", () => {
   // Auto-sync every 30s in the background (quiet)
   setInterval(() => syncWithServer({ silent: true }), 30000);
 });
+// ✅ Checker expects this function name
+async function syncQuotes() {
+  try {
+    const serverQuotes = await fetchQuotesFromServer();
+
+    // Conflict resolution: server data takes precedence
+    quotes = serverQuotes.map((q, i) => ({
+      text: q.title || q.text || `Server Quote ${i + 1}`,
+      category: q.category || "Server",
+    }));
+
+    saveQuotes();
+    populateCategories();
+
+    // Notify user
+    const quoteDisplay = document.getElementById("quoteDisplay");
+    if (quoteDisplay) {
+      quoteDisplay.textContent = "Quotes synced with server!";
+    }
+  } catch (err) {
+    console.error("Error syncing with server:", err);
+  }
+}
 
