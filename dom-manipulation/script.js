@@ -247,4 +247,159 @@ document.addEventListener("DOMContentLoaded", () => {
   populateCategories();
   showRandomQuote();
 });
+// ======================
+// Server Sync (Simulation)
+// ======================
+
+// We'll use JSONPlaceholder as a mock API.
+// It won't actually save our posts permanently, but it's perfect for simulating fetch/merge logic.
+const SERVER_ENDPOINT = "https://jsonplaceholder.typicode.com/posts";
+
+// Ensure every quote object we store looks like:
+// { id: number|string, text: string, category: string, updatedAt: ISOString, source: "local"|"server" }
+
+// --- Utilities ---
+
+function ensureQuoteShape(q) {
+  // normalize older quotes that may not have timestamps/source yet
+  if (!q.updatedAt) q.updatedAt = new Date().toISOString();
+  if (!q.source) q.source = "local";
+  return q;
+}
+
+// Re-save to localStorage + refresh any UI that depends on quotes
+function persistAndRefresh() {
+  saveQuotes();
+  // re-populate categories if you have filtering
+  if (typeof populateCategories === "function") {
+    populateCategories();
+  }
+  // if you have an on-screen quote, we won't force-change it here
+}
+
+// --- Merge logic: prefer server on conflict ---
+function mergeQuotes(serverQuotes, localQuotes) {
+  // index by id for fast comparison
+  const byId = new Map();
+
+  // first, load locals
+  localQuotes.forEach((q) => {
+    byId.set(String(q.id), ensureQuoteShape(q));
+  });
+
+  // now blend in server quotes
+  let conflicts = 0;
+  serverQuotes.forEach((srvRaw) => {
+    // Map JSONPlaceholder post -> quote shape
+    const srv = {
+      id: String(srvRaw.id),
+      text: srvRaw.title || String(srvRaw.body || "").slice(0, 140) || "Untitled",
+      category: "server",
+      updatedAt: new Date().toISOString(), // treat fetch time as updated time
+      source: "server",
+    };
+
+    const existing = byId.get(srv.id);
+    if (!existing) {
+      byId.set(srv.id, srv);
+      return;
+    }
+
+    // Conflict = same id exists. We apply "server wins".
+    conflicts++;
+    byId.set(srv.id, srv);
+  });
+
+  return { merged: Array.from(byId.values()), conflicts };
+}
+
+// --- Fetch remote quotes (simulation) ---
+async function fetchServerQuotes() {
+  // We'll just take first few posts to simulate "remote quotes"
+  const res = await fetch(SERVER_ENDPOINT + "?_limit=5");
+  if (!res.ok) throw new Error("Failed to fetch server data");
+  const data = await res.json();
+  return data;
+}
+
+// --- Push one local change (optional / simulated) ---
+async function pushLocalQuotes(localOnlyQuotes) {
+  // JSONPlaceholder returns a fake created object; it doesn't actually persist,
+  // but this is enough to simulate POST success/failure.
+  const pushes = localOnlyQuotes.map((q) =>
+    fetch(SERVER_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: q.text,
+        body: q.category,
+        userId: 1,
+      }),
+    }).then((r) => r.json())
+  );
+  await Promise.all(pushes);
+}
+
+// --- Identify local-only changes (not present on server ids) ---
+function findLocalOnly(localQuotes, serverQuotes) {
+  const serverIds = new Set(serverQuotes.map((s) => String(s.id)));
+  return localQuotes.filter((q) => !serverIds.has(String(q.id)));
+}
+
+// --- Status UI helper ---
+function setSyncStatus(msg, isError = false) {
+  const el = document.getElementById("syncStatus");
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = isError ? "#c0392b" : "#2c3e50";
+}
+
+// --- Main sync function ---
+async function syncWithServer({ silent = false } = {}) {
+  try {
+    if (!silent) setSyncStatus("Syncing…");
+
+    // 1) fetch "server" quotes
+    const serverRaw = await fetchServerQuotes();
+
+    // 2) merge server + local (server wins on conflict)
+    const { merged, conflicts } = mergeQuotes(serverRaw, quotes || []);
+
+    // 3) (optional) push local-only quotes up (simulation)
+    const localOnly = findLocalOnly(quotes || [], serverRaw);
+    if (localOnly.length > 0) {
+      await pushLocalQuotes(localOnly);
+    }
+
+    // 4) save + refresh UI
+    quotes = merged.map(ensureQuoteShape);
+    persistAndRefresh();
+
+    if (!silent) {
+      if (conflicts > 0) {
+        setSyncStatus(`Sync complete. ${conflicts} conflict(s) resolved (server version kept).`);
+        // You could also show a toast/modal here if you want a louder notification.
+      } else {
+        setSyncStatus("Sync complete. No conflicts.");
+      }
+    }
+  } catch (err) {
+    console.error(err);
+    if (!silent) setSyncStatus("Sync failed. Check your connection and try again.", true);
+  }
+}
+
+// ---------------
+// Hook up the UI
+// ---------------
+document.addEventListener("DOMContentLoaded", () => {
+  // Manual sync
+  const syncBtn = document.getElementById("syncBtn");
+  if (syncBtn) {
+    syncBtn.addEventListener("click", () => syncWithServer({ silent: false }));
+  }
+
+  // Auto-sync every 30s in the background (quiet)
+  setInterval(() => syncWithServer({ silent: true }), 30000);
+});
 
