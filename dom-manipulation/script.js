@@ -360,7 +360,7 @@ async function syncWithServer({ silent = false } = {}) {
     if (!silent) setSyncStatus("Syncing…");
 
     // 1) fetch "server" quotes
-    const serverRaw = await fetchServerQuotes();
+    const serverRaw = await fetchQuotesFromServer();
 
     // 2) merge server + local (server wins on conflict)
     const { merged, conflicts } = mergeQuotes(serverRaw, quotes || []);
